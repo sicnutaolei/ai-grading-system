@@ -1,0 +1,13 @@
+node_modules
+dist
+dist-ssr
+*.local
+.DS_Store
+.vscode/*
+
+# Rust / Tauri
+src-tauri/target
+src-tauri/gen/schemas
+
+# 本地开发配置（含测试 API Key，绝不提交）
+src-tauri/dev-settings.json
