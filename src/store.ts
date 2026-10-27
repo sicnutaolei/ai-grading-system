@@ -12,6 +12,7 @@ import { create } from "zustand";
 import { MOCK_FILES, MOCK_RESULTS } from "@/fixtures/sample";
 import * as bridge from "@/lib/bridge";
 import { orderedPaths } from "@/lib/order";
+import { parseRosterText, rosterToText } from "@/lib/roster";
 import { DEFAULT_RUBRIC } from "@/lib/rubric";
 import { finalTotal, isModified, scoreOf } from "@/lib/score";
 import type {
@@ -34,7 +35,8 @@ const DEFAULT_CONFIG: ApiConfig = {
   thinking: true,
 };
 
-const CONCURRENCY = 3;
+const DEFAULT_CONCURRENCY = 3;
+const ROSTER_STORAGE_KEY = "ai-grader:roster";
 
 export type ToastKind = "ok" | "err" | "info";
 export interface Toast {
@@ -46,6 +48,11 @@ export interface Toast {
 interface AppStore {
   config: ApiConfig;
   prompt: string;
+  /** 并发模式开关。关掉 = 一张一张来（concurrency 恒为 1） */
+  concurrentEnabled: boolean;
+  concurrency: number;
+  /** 考生名单原文（一行一个），提交时再解析成数组 */
+  rosterText: string;
   directory: string;
   files: ScanFile[];
   results: Record<string, GradingResult>;
@@ -64,6 +71,11 @@ interface AppStore {
   setConfig: (patch: Partial<ApiConfig>) => void;
   setPrompt: (text: string) => void;
   resetPrompt: () => void;
+  setConcurrentEnabled: (on: boolean) => void;
+  setConcurrency: (n: number) => void;
+  setRosterText: (text: string) => void;
+  importRoster: () => Promise<void>;
+  clearRoster: () => void;
   importFolder: () => Promise<void>;
   startGrading: () => Promise<void>;
   retryOne: (path: string) => Promise<void>;
@@ -118,6 +130,9 @@ function resolvePath(files: ScanFile[], name: string): string {
 export const useApp = create<AppStore>((set, get) => ({
   config: DEFAULT_CONFIG,
   prompt: DEFAULT_RUBRIC,
+  concurrentEnabled: true,
+  concurrency: DEFAULT_CONCURRENCY,
+  rosterText: "",
   directory: "",
   files: [],
   results: {},
@@ -132,6 +147,14 @@ export const useApp = create<AppStore>((set, get) => ({
   booting: true,
 
   init: async () => {
+    // 名单不算敏感信息，但要跨会话保留，否则每次开都得重新导入
+    try {
+      const savedRoster = window.localStorage.getItem(ROSTER_STORAGE_KEY);
+      if (savedRoster) set({ rosterText: savedRoster });
+    } catch {
+      /* localStorage 不可用就用空的 */
+    }
+
     try {
       const saved = await bridge.loadSettings();
       if (saved) {
@@ -225,6 +248,40 @@ export const useApp = create<AppStore>((set, get) => ({
 
   resetPrompt: () => set({ prompt: DEFAULT_RUBRIC }),
 
+  setConcurrentEnabled: (on) => set({ concurrentEnabled: on }),
+
+  // 后端上限是 8（Semaphore 里 clamp 1..8），这里同步收口，避免前后端打架
+  setConcurrency: (n) =>
+    set({ concurrency: Math.min(Math.max(Math.round(n) || 1, 1), 8) }),
+
+  setRosterText: (text) => {
+    set({ rosterText: text });
+    try {
+      window.localStorage.setItem(ROSTER_STORAGE_KEY, text);
+    } catch {
+      /* 隐私模式下写不进去，不影响本次使用 */
+    }
+  },
+
+  importRoster: async () => {
+    const s = get();
+    try {
+      const path = await bridge.pickRosterFile();
+      if (!path) return;
+      const names = await bridge.loadRoster(path);
+      if (names.length === 0) {
+        s.pushToast("名单里没解析出姓名，请确认每行一个名字", "err");
+        return;
+      }
+      get().setRosterText(rosterToText(names));
+      s.pushToast(`已导入 ${names.length} 位考生`, "ok");
+    } catch (e) {
+      s.pushToast(`导入名单失败：${String(e)}`, "err");
+    }
+  },
+
+  clearRoster: () => get().setRosterText(""),
+
   importFolder: async () => {
     try {
       const dir = await bridge.pickFolder();
@@ -281,7 +338,8 @@ export const useApp = create<AppStore>((set, get) => ({
         files: s.files.map((f) => f.path),
         config: s.config,
         prompt: s.prompt,
-        concurrency: CONCURRENCY,
+        concurrency: s.concurrentEnabled ? s.concurrency : 1,
+        roster: parseRosterText(s.rosterText),
       });
       // Key 只在批改成功后落盘，避免手滑存了半截
       await bridge.saveSettings(s.config).catch(() => undefined);
@@ -295,7 +353,12 @@ export const useApp = create<AppStore>((set, get) => ({
     const s = get();
     try {
       s.pushToast("正在重新批改这一张…", "info");
-      const result = await bridge.gradeSingle(path, s.config, s.prompt);
+      const result = await bridge.gradeSingle(
+        path,
+        s.config,
+        s.prompt,
+        parseRosterText(s.rosterText)
+      );
       set((prev) => ({
         results: { ...prev.results, [result.file_path]: result },
         failed: Object.fromEntries(

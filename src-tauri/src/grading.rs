@@ -34,7 +34,8 @@ pub async fn run_batch(app: AppHandle, req: GradeRequest) {
     }
 
     let cfg: Arc<ApiConfig> = Arc::new(req.config.clone());
-    let system_prompt: Arc<String> = Arc::new(prompt::build_system_prompt(&req.prompt));
+    let system_prompt: Arc<String> =
+        Arc::new(prompt::build_system_prompt(&req.prompt, &req.roster));
     let sem = Arc::new(Semaphore::new(req.concurrency.clamp(1, 8)));
 
     let mut set = tokio::task::JoinSet::new();

@@ -6,6 +6,7 @@ mod grading;
 mod models;
 mod parser;
 mod prompt;
+mod roster;
 mod scanner;
 mod settings;
 
@@ -73,6 +74,7 @@ async fn grade_single(
     file_path: String,
     config: ApiConfig,
     prompt_text: String,
+    #[allow(non_snake_case)] roster: Option<Vec<String>>,
 ) -> Result<GradingResult, String> {
     if config.api_key.trim().is_empty() {
         return Err("请先填写 API Key".into());
@@ -83,7 +85,7 @@ async fn grade_single(
     }
 
     let client = api::build_client(&config).map_err(|e| e.to_string())?;
-    let system_prompt = prompt::build_system_prompt(&prompt_text);
+    let system_prompt = prompt::build_system_prompt(&prompt_text, &roster.unwrap_or_default());
     let file_name = p
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
@@ -129,6 +131,13 @@ fn export_results(req: ExportRequest) -> Result<String, String> {
 #[tauri::command]
 fn default_rubric() -> String {
     prompt::DEFAULT_RUBRIC.to_string()
+}
+
+/// 读取考生名单文件（txt / csv），返回姓名数组。
+/// 支持 UTF-8（含 BOM）和 GB18030（Excel 另存的 csv）。
+#[tauri::command]
+fn load_roster(path: String) -> Result<Vec<String>, String> {
+    roster::load(&PathBuf::from(path.trim())).map_err(|e| e.to_string())
 }
 
 /// 在文件管理器里定位某张卷子（老师复核异常卷时很方便）
@@ -180,6 +189,7 @@ pub fn run() {
             save_settings,
             export_results,
             default_rubric,
+            load_roster,
             reveal_in_folder
         ])
         .run(tauri::generate_context!())

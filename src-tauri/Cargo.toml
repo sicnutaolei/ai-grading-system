@@ -32,6 +32,8 @@ chrono = { version = "0.4", features = ["serde"] }
 walkdir = "2"
 anyhow = "1"
 thiserror = "2"
+# 名单文件可能是 Excel 另存的 CSV（中文是 GB18030），UTF-8 解不了要能退回
+encoding_rs = "0.8"
 
 [profile.release]
 codegen-units = 1

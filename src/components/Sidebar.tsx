@@ -12,6 +12,7 @@ import {
   Loader2,
   Play,
   RotateCcw,
+  SlidersHorizontal,
   XCircle,
 } from "lucide-react";
 
@@ -19,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Collapsible,
   CollapsibleContent,
@@ -26,6 +28,7 @@ import {
 } from "@/components/ui/collapsible";
 import { IS_TAURI } from "@/lib/bridge";
 import { buildRows } from "@/lib/order";
+import { parseRosterText } from "@/lib/roster";
 import { fmtScore, fmtSize } from "@/lib/score";
 import { cn } from "@/lib/utils";
 import { useApp } from "@/store";
@@ -87,6 +90,8 @@ export function Sidebar() {
         </Button>
       </div>
 
+      <BatchSettings />
+
       {/* 列表表头 */}
       <div className="flex items-center justify-between px-4 pb-1.5 pt-1">
         <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -133,15 +138,25 @@ export function Sidebar() {
                 <div className="size-3.5 shrink-0 rounded-full border border-dashed border-muted-foreground/40" />
               )}
 
-              <span
-                className={cn(
-                  "min-w-0 flex-1 truncate text-[12px] leading-tight",
-                  active ? "font-medium text-foreground" : "text-foreground/80"
+              <div className="min-w-0 flex-1">
+                <div
+                  className={cn(
+                    "truncate text-[12px] leading-tight",
+                    active ? "font-medium text-foreground" : "text-foreground/85"
+                  )}
+                  title={`${row.displayName}（${fmtSize(row.file.size)}）`}
+                >
+                  {row.displayName}
+                </div>
+                {row.displayName !== row.file.file_name && (
+                  <div
+                    className="truncate text-[9.5px] leading-tight text-muted-foreground/75"
+                    title={row.file.file_name}
+                  >
+                    {row.file.file_name}
+                  </div>
                 )}
-                title={`${row.file.file_name}（${fmtSize(row.file.size)}）`}
-              >
-                {row.file.file_name}
-              </span>
+              </div>
 
               {row.abnormal && (
                 <Badge variant="danger" className="shrink-0 px-1">
@@ -336,6 +351,130 @@ function ApiSection() {
           <RotateCcw className="size-3" />
           测试连接
         </Button>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+/** 批改设置：并发请求 + 考生名单 */
+function BatchSettings() {
+  const concurrentEnabled = useApp((s) => s.concurrentEnabled);
+  const concurrency = useApp((s) => s.concurrency);
+  const rosterText = useApp((s) => s.rosterText);
+  const setConcurrentEnabled = useApp((s) => s.setConcurrentEnabled);
+  const setConcurrency = useApp((s) => s.setConcurrency);
+  const setRosterText = useApp((s) => s.setRosterText);
+  const importRoster = useApp((s) => s.importRoster);
+  const clearRoster = useApp((s) => s.clearRoster);
+
+  const [open, setOpen] = useState(false);
+  const rosterCount = parseRosterText(rosterText).length;
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="px-3 pb-2">
+      <CollapsibleTrigger className="flex w-full items-center gap-1.5 rounded-md py-1.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground">
+        <SlidersHorizontal className="size-3" />
+        批改设置
+        <span className="ml-auto flex items-center gap-1.5 text-[10px]">
+          <span>并发 {concurrentEnabled ? concurrency : 1}</span>
+          <span className="text-muted-foreground/40">·</span>
+          <span className={rosterCount > 0 ? "text-emerald-600" : ""}>
+            {rosterCount > 0 ? `名单 ${rosterCount} 人` : "无名单"}
+          </span>
+        </span>
+        <ChevronDown
+          className={cn(
+            "size-3 transition-transform",
+            !open && "-rotate-90"
+          )}
+        />
+      </CollapsibleTrigger>
+
+      <CollapsibleContent className="space-y-3 pt-1.5">
+        {/* 并发 */}
+        <div className="space-y-1">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={concurrentEnabled}
+            onClick={() => setConcurrentEnabled(!concurrentEnabled)}
+            className="flex w-full items-center gap-2 text-left"
+            title="并发可以让整批更快，但太高容易触发网关限流"
+          >
+            <span
+              className={cn(
+                "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors",
+                concurrentEnabled ? "bg-primary" : "bg-input"
+              )}
+            >
+              <span
+                className={cn(
+                  "absolute size-3 rounded-full bg-white shadow transition-all",
+                  concurrentEnabled ? "left-3.5" : "left-0.5"
+                )}
+              />
+            </span>
+            <span className="text-[11px]">并发请求</span>
+            <span className="ml-auto text-[10px] text-muted-foreground">
+              {concurrentEnabled ? "开" : "关 · 逐张处理"}
+            </span>
+          </button>
+
+          {concurrentEnabled && (
+            <div className="flex items-center gap-2 pl-9">
+              <Label htmlFor="concurrency" className="text-[10px]">
+                同时批改
+              </Label>
+              <Input
+                id="concurrency"
+                type="number"
+                min={1}
+                max={8}
+                value={concurrency}
+                onChange={(e) => setConcurrency(Number(e.target.value))}
+                className="h-7 w-14 px-1 text-center text-[11px] tabular-nums"
+              />
+              <span className="text-[10px] text-muted-foreground">
+                张（1–8）
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* 名单 */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <Label className="text-[10px]">考生名单（一行一个）</Label>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={importRoster}
+                className="text-[10px] text-sky-600 hover:underline"
+              >
+                导入文件
+              </button>
+              {rosterCount > 0 && (
+                <button
+                  type="button"
+                  onClick={clearRoster}
+                  className="text-[10px] text-muted-foreground hover:underline"
+                >
+                  清空
+                </button>
+              )}
+            </div>
+          </div>
+          <Textarea
+            value={rosterText}
+            onChange={(e) => setRosterText(e.target.value)}
+            placeholder={"张三\n李四\n王五"}
+            spellCheck={false}
+            className="thin-scrollbar h-24 resize-none text-[11px] leading-relaxed"
+          />
+          <p className="text-[9.5px] leading-snug text-muted-foreground">
+            导入后模型只能从名单里挑名字，并对形近字纠错；留空则纯靠视觉识别
+          </p>
+        </div>
       </CollapsibleContent>
     </Collapsible>
   );

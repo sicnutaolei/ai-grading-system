@@ -2,6 +2,8 @@
 
 导入答题卡文件夹 → 调 `deepseek-flash` 逐张批改 → 实时看给分理由 → 人工改分覆盖 → 异常卷（没写名字 / 字迹不清）自动拦截置顶。
 
+批改完成后列表按总分重排、显示名换成考生姓名（文件名不动）。可提前导入班级名单，让模型只能从名单里挑名字，避免手写姓名被读成别的字。
+
 Tauri v2 (Rust) + React 18 + TypeScript + TailwindCSS + shadcn/ui。
 
 | 正常卷 | 异常卷（红色横幅 + 列表置顶 + 姓名「未知」） |
@@ -36,7 +38,8 @@ ai-grading-system/
 │   ├── store.ts                    # zustand：状态 / 改分 / 修改日志 / 导出
 │   ├── lib/
 │   │   ├── bridge.ts               # invoke + 事件 + 浏览器 mock
-│   │   ├── order.ts                # 异常卷置顶排序
+│   │   ├── order.ts                # 异常置顶 + 按分数降序
+│   │   ├── roster.ts               # 名单文本 ↔ 数组
 │   │   ├── score.ts                # 总分重算、分数着色、分组
 │   │   ├── rubric.ts               # ?raw 引入 rubric.md
 │   │   └── utils.ts                # cn()
@@ -66,6 +69,7 @@ ai-grading-system/
         ├── models.rs               # 前后端契约
         ├── prompt.rs               # include_str!(rubric.md) + 固定 JSON 契约
         ├── scanner.rs              # 文件夹遍历 + 自然排序
+        ├── roster.rs               # 名单解析（UTF-8 / GB18030 / CSV 表头）
         ├── api.rs                  # deepseek-flash 请求（关思考/联网）
         ├── parser.rs               # JSON 抠取 + 归一化 + clamp
         ├── grading.rs              # 并发编排 + 事件推送
@@ -100,6 +104,7 @@ ai-grading-system/
 | `base64` 0.22 | 图片转 data URL |
 | `walkdir` 2 | 递归遍历 |
 | `chrono` | 时间戳 |
+| `encoding_rs` | 名单文件可能是 Excel 另存的 GB18030 CSV |
 | `anyhow` / `thiserror` | 错误处理 |
 
 ## 开发
@@ -164,6 +169,27 @@ app.asset_protocol_scope().allow_directory(&dir, true)?;
 
 `rubric.md` 在仓库根：Rust 用 `include_str!("../../rubric.md")`，前端用 `import ... ?raw`。改细则只改一个文件，两边不会漂移。JSON 输出契约写死在 `prompt.rs`，老师编辑细则时改不到。
 
+**6. 名单纠错：把"猜名字"变成"选名字"**
+
+手写姓名靠视觉识别不可靠（实测会把形近的三字名读成别的字，甚至凭空造一个）。导入班级名单后，`prompt.rs` 会插入一段强约束：
+
+- `student_name` 必须是名单里的某一个完整姓名，原样照抄；
+- 形近时选字形最接近的那个，并在总评里标「姓名按名单匹配，请核对」；
+- 姓名栏为空或完全对不上任何一项 → `未知` + `is_abnormal: true`；
+- **不许因为名单里有某个名字就硬套**（这条单独写，否则模型会倾向于"必须选一个"）。
+
+名单文件支持 txt / csv，UTF-8 和 GB18030 都能读（Excel 在中文 Windows 下导出的 csv 就是 GB18030，用 UTF-8 解会全变乱码，而乱码的名单比没有名单更危险）。解析会跳过表头（`序号,姓名`）和序号列。
+
+**7. 排序：异常优先于分数**
+
+列表排序不是单纯按分数降序，而是：
+
+1. **异常卷永远置顶** —— 它们的分数只来自"能看清的部分"，混进排名里会让老师误判班级情况；
+2. 其余已批改的按 **AI 原始总分**降序（用 `total_ai` 而不是改分后的分数，这样老师改分时列表不会突然重排、把正在看的那张顶走）；
+3. 未批改 / 失败的垫底，按文件名自然序。
+
+显示名取考生姓名，拿不到才退回文件名；**文件名本身从不修改**，第二行小字仍然显示原文件名，方便对回原始文件。
+
 ## 当前状态
 
 | 项 | 状态 |
@@ -173,7 +199,7 @@ app.asset_protocol_scope().allow_directory(&dir, true)?;
 | 真实接口联调 | ✅ `https://api.deepseek.com` + `deepseek-flash` 跑通整卷批改 |
 | 异常卷识别 | ✅ 涂白姓名后正确返回 `is_abnormal: true` / `姓名: 未知` |
 | Rust `cargo check` | ✅ 通过（rustc 1.98.1 / x86_64-pc-windows-msvc） |
-| Rust `cargo test` | ✅ **14 passed, 0 failed** |
+| Rust `cargo test` | ✅ **20 passed, 0 failed** |
 | Rust `cargo build` | ✅ 产出 20 MB debug exe；启动后窗口响应正常（28.6 MB 常驻） |
 
 ### 实测数据（同一张样卷，2026-10-26）
@@ -193,4 +219,4 @@ app.asset_protocol_scope().allow_directory(&dir, true)?;
 - **模型自报总分和明细经常对不上**（36 vs 29、30 vs 26）。程序一律按明细求和，并在分数下方提示 `自报 36 ≠ 明细 29`。
 - API Key 以明文存在 `app_config_dir/settings.json`；开发用的测试 Key 放在 `src-tauri/dev-settings.json`（已 gitignore，仅 debug 构建读取，不进二进制）。
 - 图片不做压缩，单张超过 8 MB 会在日志里提示但不拦截（多数网关单图上限 10 MB）。
-- 超过 30 张的大批量建议把并发调低（`store.ts` 的 `CONCURRENCY`，默认 3）。
+- 超过 30 张的大批量建议把并发调低（左侧「批改设置」里可改，默认 3，上限 8）。

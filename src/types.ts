@@ -55,6 +55,8 @@ export interface GradeRequest {
   config: ApiConfig;
   prompt: string;
   concurrency: number;
+  /** 提前导入的考生名单，非空时模型只能从名单里挑名字 */
+  roster: string[];
 }
 
 /** 事件 payload */

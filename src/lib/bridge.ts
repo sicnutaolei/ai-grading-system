@@ -72,7 +72,8 @@ export async function startGrading(req: GradeRequest): Promise<void> {
 export async function gradeSingle(
   filePath: string,
   config: ApiConfig,
-  promptText: string
+  promptText: string,
+  roster: string[]
 ): Promise<GradingResult> {
   if (!IS_TAURI) {
     const hit = MOCK_RESULTS[filePath];
@@ -83,7 +84,34 @@ export async function gradeSingle(
     filePath,
     config,
     promptText,
+    roster,
   });
+}
+
+/** 选一个名单文件（txt / csv），返回绝对路径 */
+export async function pickRosterFile(): Promise<string | null> {
+  if (!IS_TAURI) return "/mock/名单.txt";
+  const picked = await openDialog({
+    multiple: false,
+    directory: false,
+    title: "选择考生名单（txt / csv，一行一个名字）",
+    filters: [
+      { name: "名单文件", extensions: ["txt", "csv"] },
+      { name: "全部文件", extensions: ["*"] },
+    ],
+  });
+  return typeof picked === "string" ? picked : null;
+}
+
+/** 读取并解析名单文件（UTF-8 / GB18030 都支持） */
+export async function loadRoster(path: string): Promise<string[]> {
+  if (!IS_TAURI) {
+    return mockDelay(
+      ["张三", "李四", "王五", "赵六", "钱七", "孙八", "周九", "吴十"],
+      200
+    );
+  }
+  return invoke<string[]>("load_roster", { path });
 }
 
 export async function testConnection(config: ApiConfig): Promise<string> {

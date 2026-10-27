@@ -52,7 +52,10 @@ pub const JSON_CONTRACT: &str = r##"# 输出格式（强制）
 "##;
 
 /// 拼装最终发给模型的 system prompt
-pub fn build_system_prompt(rubric: &str) -> String {
+///
+/// `roster` 非空时插入「姓名必须从名单里选」的强约束。实测：不给名单时模型会
+/// 把形近的手写姓名读成另一个名字（甚至凭空造一个），给了名单之后再测就稳定了。
+pub fn build_system_prompt(rubric: &str, roster: &[String]) -> String {
     let body = if rubric.trim().is_empty() {
         DEFAULT_RUBRIC
     } else {
@@ -62,9 +65,34 @@ pub fn build_system_prompt(rubric: &str) -> String {
         "你是一位资深的高中化学阅卷老师，正在批改学生手写答题卡的扫描图。\n\
          你的判断必须基于图像本身的视觉信息，不要先做纯文本 OCR 再推理。\n\
          给分要严格对齐下面的细则，理由要具体到「哪一步对了、哪一步错了」。\n\n\
-         {body}\n\n{contract}",
+         {body}\n\n{roster_block}{contract}",
         body = body,
+        roster_block = roster_block(roster),
         contract = JSON_CONTRACT
+    )
+}
+
+/// 名单约束段。没有名单时返回空串，行为与之前完全一致。
+fn roster_block(roster: &[String]) -> String {
+    let names: Vec<&str> = roster
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if names.is_empty() {
+        return String::new();
+    }
+
+    format!(
+        "# 本班考生名单（共 {n} 人，姓名必须从这里选）\n\
+         {list}\n\n\
+         ## 姓名匹配规则（优先级高于一切视觉猜测）\n\
+         1. `student_name` 必须是上面名单中的**某一个完整姓名**，原样照抄，不许改字、不许简写、不许自己编造。\n\
+         2. 手写体形近时，从名单里选字形最接近的那一个；同时在 `overall_comment` 末尾加上「姓名按名单匹配，请核对」。\n\
+         3. 姓名栏为空，或完全无法与名单中任何一项对应时：`student_name` 填 `未知`，`is_abnormal` 填 `true`，`abnormal_reason` 填 `没写名字或不在名单内`。\n\
+         4. 绝不许因为名单里有某个名字，就把一张明显写着别的名字的卷子硬套上去。名单是用来纠错的，不是用来编造的。\n\n",
+        n = names.len(),
+        list = names.join("、")
     )
 }
 
@@ -78,12 +106,25 @@ mod tests {
 
     #[test]
     fn system_prompt_contains_contract_and_rules() {
-        let p = build_system_prompt(DEFAULT_RUBRIC);
+        let p = build_system_prompt(DEFAULT_RUBRIC, &[]);
         assert!(p.contains("沸石"));
         assert!(p.contains("is_abnormal"));
         assert!(p.contains("升华"));
         // 老师清空细则时应回落到内置版本，而不是发出空 prompt
-        let fallback = build_system_prompt("   ");
+        let fallback = build_system_prompt("   ", &[]);
         assert!(fallback.contains("选择题"));
+    }
+
+    #[test]
+    fn roster_only_appears_when_provided() {
+        let without = build_system_prompt(DEFAULT_RUBRIC, &[]);
+        assert!(!without.contains("考生名单"));
+
+        let with = build_system_prompt(DEFAULT_RUBRIC, &["张三".into(), "李四".into()]);
+        assert!(with.contains("共 2 人"));
+        assert!(with.contains("张三、李四"));
+        assert!(with.contains("不许自己编造"));
+        // 名单要排在 JSON 契约之前，别被当成输出示例的一部分
+        assert!(with.find("考生名单").unwrap() < with.find("输出格式").unwrap());
     }
 }

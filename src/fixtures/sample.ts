@@ -51,6 +51,14 @@ const questionsA: QuestionScore[] = raw.questions.map((q) => ({
 
 const totalA = questionsA.reduce((sum, item) => sum + item.ai_score, 0);
 
+/** C 卷：虚构的高分卷，用来看「按分数降序」的排序效果 */
+const questionsC: QuestionScore[] = questionsA.map((q) => ({
+  ...q,
+  ai_score: Math.min(q.max_score, Math.round(q.ai_score * 1.6)),
+  reason: q.ai_score === q.max_score ? q.reason : "按细则给分，详见原始返回",
+}));
+const totalC = questionsC.reduce((sum, item) => sum + item.ai_score, 0);
+
 /** B 卷：没写名字 + 大面积涂改，用来演示异常拦截 */
 const questionsB: QuestionScore[] = questionsA.map((item, i) => {
   const visible = i < 10;
@@ -70,10 +78,12 @@ const totalB = questionsB.reduce((sum, item) => sum + item.ai_score, 0);
 
 const NAME_A = "示例答题卡-A.svg";
 const NAME_B = "示例答题卡-B.svg";
+const NAME_C = "示例答题卡-C.svg";
 
 export const MOCK_FILES: ScanFile[] = [
   { path: "/sample/card-a.svg", file_name: NAME_A, size: 4428 },
   { path: "/sample/card-b.svg", file_name: NAME_B, size: 4317 },
+  { path: "/sample/card-c.svg", file_name: NAME_C, size: 4428 },
 ];
 
 export const MOCK_RESULTS: Record<string, GradingResult> = {
@@ -114,6 +124,22 @@ export const MOCK_RESULTS: Record<string, GradingResult> = {
   "total_score": ${totalB},
   "questions": [ ... 共 28 个得分点 ... ]
 }`,
+  },
+  "/sample/card-c.svg": {
+    file_path: "/sample/card-c.svg",
+    file_name: NAME_C,
+    student_name: "王五",
+    is_abnormal: false,
+    abnormal_reason: "",
+    total_ai: totalC,
+    total_ai_reported: totalC,
+    total_full: 100,
+    questions: questionsC,
+    overall_comment: "选择题全对，主观题要点基本齐，方程式书写规范。",
+    model: "deepseek-flash",
+    graded_at: "2026-10-26 19:24:02",
+    duration_ms: 26100,
+    raw_json: `{ "student_name": "王五", "total_score": ${totalC} }`,
   },
 };
 

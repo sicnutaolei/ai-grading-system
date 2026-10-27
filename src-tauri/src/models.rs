@@ -110,6 +110,10 @@ pub struct GradeRequest {
     pub prompt: String,
     #[serde(default = "default_concurrency")]
     pub concurrency: usize,
+    /// 提前导入的考生名单。非空时会写进 prompt，要求模型只能从名单里挑名字，
+    /// 这是「精准识别姓名」的核心手段 —— 手写体靠视觉猜名字不可靠，靠名单收敛才可靠。
+    #[serde(default)]
+    pub roster: Vec<String>,
 }
 
 fn default_concurrency() -> usize {
