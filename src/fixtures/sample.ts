@@ -81,9 +81,9 @@ const NAME_B = "示例答题卡-B.svg";
 const NAME_C = "示例答题卡-C.svg";
 
 export const MOCK_FILES: ScanFile[] = [
-  { path: "/sample/card-a.svg", file_name: NAME_A, size: 4428 },
-  { path: "/sample/card-b.svg", file_name: NAME_B, size: 4317 },
-  { path: "/sample/card-c.svg", file_name: NAME_C, size: 4428 },
+  { path: "/sample/card-a.svg", file_name: NAME_A, size: 4428, page_count: 1 },
+  { path: "/sample/card-b.svg", file_name: NAME_B, size: 4317, page_count: 1 },
+  { path: "/sample/card-c.svg", file_name: NAME_C, size: 4428, page_count: 1 },
 ];
 
 export const MOCK_RESULTS: Record<string, GradingResult> = {

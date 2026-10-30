@@ -2,6 +2,7 @@ import { useEffect } from "react";
 
 import { GradePanel } from "@/components/GradePanel";
 import { ImageViewer } from "@/components/ImageViewer";
+import { PdfNotice } from "@/components/PdfNotice";
 import { Sidebar } from "@/components/Sidebar";
 import { Toaster } from "@/components/Toaster";
 import { IS_TAURI } from "@/lib/bridge";
@@ -42,11 +43,12 @@ export default function App() {
   }, [subscribe]);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
+    <div className="flex h-dvh w-screen overflow-hidden bg-muted/30 text-foreground antialiased">
       <Sidebar />
       <ImageViewer />
       <GradePanel />
       <Toaster />
+      <PdfNotice />
     </div>
   );
 }

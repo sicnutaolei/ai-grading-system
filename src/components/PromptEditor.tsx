@@ -27,7 +27,7 @@ export function PromptEditor() {
     <Collapsible open={open} onOpenChange={setOpen} className="border-b">
       <CollapsibleTrigger className="flex w-full items-center gap-2 px-4 py-2.5 text-left transition-colors hover:bg-accent/50">
         <Sparkles className="size-3.5 text-muted-foreground" />
-        <span className="text-xs font-medium">评分细则 Prompt</span>
+        <span className="text-xs font-medium">评分细则</span>
         <span className="text-[10px] tabular-nums text-muted-foreground">
           {prompt.length} 字
         </span>

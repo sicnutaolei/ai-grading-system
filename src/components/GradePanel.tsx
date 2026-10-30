@@ -1,12 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
   Ban,
   ChevronDown,
   Clock,
   Download,
   FileText,
+  History,
   Loader2,
   RefreshCw,
   Undo2,
@@ -24,6 +27,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { orderedPaths } from "@/lib/order";
 import {
   finalTotal,
   fmtDuration,
@@ -41,16 +45,49 @@ export function GradePanel() {
   const files = useApp((s) => s.files);
   const running = useApp((s) => s.running);
   const retryOne = useApp((s) => s.retryOne);
+  const exportAs = useApp((s) => s.exportAs);
+  const step = useApp((s) => s.step);
+  const excludedPaths = useApp((s) => s.excludedPaths);
 
   const result = currentPath ? results[currentPath] : undefined;
   const error = currentPath ? failed[currentPath] : undefined;
   const file = files.find((f) => f.path === currentPath);
+  const order = useMemo(
+    () => orderedPaths(
+      files.filter((item) => !excludedPaths.includes(item.path)),
+      results,
+      failed
+    ),
+    [files, results, failed, excludedPaths]
+  );
+  const index = currentPath ? order.indexOf(currentPath) : -1;
+  const hasResults = files.some((f) => results[f.path] && !excludedPaths.includes(f.path));
+  const reviewCount = result?.questions.filter((q) => q.review_needed).length ?? 0;
 
   return (
-    <aside className="flex h-full w-[396px] shrink-0 flex-col border-l bg-white">
+    <aside className="flex h-full w-[368px] shrink-0 flex-col border-l border-border/80 bg-white xl:w-[400px]">
+      <header className="flex h-16 shrink-0 items-center gap-3 border-b border-border/70 px-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold">复核与评分</h2>
+            {reviewCount > 0 && <Badge variant="warning">{reviewCount} 项待复核</Badge>}
+          </div>
+          <p className="mt-1 text-[11px] text-muted-foreground">核对依据，修正分数，再继续下一份</p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 shrink-0 gap-1.5 px-2.5 text-[11px]"
+          onClick={() => exportAs("csv")}
+          disabled={!hasResults}
+          title="导出全部已批改成绩"
+        >
+          <Download className="size-3.5" />导出 CSV
+        </Button>
+      </header>
       <PromptEditor />
 
-      <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto">
+      <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {!currentPath && <PanelEmpty />}
 
         {currentPath && !result && !error && (
@@ -61,7 +98,9 @@ export function GradePanel() {
           />
         )}
 
-        {currentPath && error && <PanelError message={error} />}
+        {currentPath && error && (
+          <PanelError message={error} onRetry={() => retryOne(currentPath)} />
+        )}
 
         {currentPath && result && (
           <div className="space-y-3 p-4">
@@ -69,13 +108,38 @@ export function GradePanel() {
             <StudentCard result={result} filePath={currentPath} />
             <BlockTitle>得分明细</BlockTitle>
             <ScoreList result={result} filePath={currentPath} />
-            <BlockTitle>修改日志</BlockTitle>
-            <RevisionLog filePath={currentPath} />
+            <RevisionSection filePath={currentPath} />
             <Actions result={result} filePath={currentPath} />
             <RawJson result={result} />
           </div>
         )}
       </div>
+
+      <footer className="flex shrink-0 items-center gap-2 border-t border-border/80 bg-white p-3">
+        <Button
+          variant="outline"
+          size="sm"
+          className="flex-1 gap-1.5"
+          onClick={() => step(-1)}
+          disabled={index <= 0}
+          title="上一份试卷 (←)"
+        >
+          <ArrowLeft className="size-3.5" />上一份
+        </Button>
+        <span className="min-w-12 text-center text-[11px] tabular-nums text-muted-foreground">
+          {index >= 0 ? index + 1 : 0} / {order.length}
+        </span>
+        <Button
+          variant={result ? "default" : "outline"}
+          size="sm"
+          className="flex-1 gap-1.5"
+          onClick={() => step(1)}
+          disabled={index < 0 || index >= order.length - 1}
+          title="下一份试卷 (→)"
+        >
+          下一份<ArrowRight className="size-3.5" />
+        </Button>
+      </footer>
     </aside>
   );
 }
@@ -85,6 +149,31 @@ function BlockTitle({ children }: { children: React.ReactNode }) {
     <h3 className="pt-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
       {children}
     </h3>
+  );
+}
+
+function RevisionSection({ filePath }: { filePath: string }) {
+  const [open, setOpen] = useState(false);
+  const count = useApp(
+    (s) => s.revisions.filter((revision) => revision.file_path === filePath).length
+  );
+
+  useEffect(() => {
+    setOpen(false);
+  }, [filePath]);
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="rounded-lg border bg-white">
+      <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground">
+        <History className="size-3.5" />
+        修改记录
+        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] tabular-nums">{count}</span>
+        <ChevronDown className={cn("ml-auto size-3.5 transition-transform", !open && "-rotate-90")} />
+      </CollapsibleTrigger>
+      <CollapsibleContent className="border-t px-3 py-3">
+        <RevisionLog filePath={filePath} />
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -300,28 +389,20 @@ function Actions({
         </Button>
       </div>
 
-      <div className="flex gap-1.5">
+      <div className="flex items-center justify-between border-t pt-1.5">
+        <p className="text-[10px] text-muted-foreground">
+          {result.questions.length} 个得分点
+        </p>
         <Button
           variant="ghost"
           size="sm"
-          className="flex-1 gap-1.5 text-[11px] text-muted-foreground"
-          onClick={() => exportAs("csv")}
-        >
-          <Download className="size-3.5" />
-          导出全部成绩 CSV
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="gap-1.5 text-[11px] text-muted-foreground"
+          className="h-7 gap-1.5 px-2 text-[11px] text-muted-foreground"
           onClick={() => exportAs("json")}
+          title="导出全部成绩与评分明细"
         >
-          JSON
+          <Download className="size-3" />导出 JSON
         </Button>
       </div>
-      <p className="text-right text-[10px] text-muted-foreground/70">
-        {result.questions.length} 个得分点
-      </p>
     </div>
   );
 }
@@ -397,18 +478,22 @@ function PanelPending({
   );
 }
 
-function PanelError({ message }: { message: string }) {
+function PanelError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="p-4">
-      <div className="flex gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3">
+    <div className="space-y-3 p-4">
+      <div className="flex gap-2.5 rounded-xl border border-rose-200 bg-rose-50 p-3.5" role="alert">
         <Ban className="mt-0.5 size-4 shrink-0 text-rose-600" />
-        <div className="min-w-0 space-y-1">
+        <div className="min-w-0 space-y-1.5">
           <p className="text-xs font-semibold text-rose-800">这一张批改失败</p>
-          <p className="break-words text-[11px] leading-relaxed text-rose-700/90">
+          <p className="select-text break-words text-[11px] leading-relaxed text-rose-700/90">
             {message}
           </p>
+          <p className="text-[10px] text-rose-700/70">可检查网络与接口配置后重试，其他试卷不受影响。</p>
         </div>
       </div>
+      <Button variant="outline" size="sm" className="w-full gap-1.5" onClick={onRetry}>
+        <RefreshCw className="size-3.5" />重新批改这一张
+      </Button>
     </div>
   );
 }
