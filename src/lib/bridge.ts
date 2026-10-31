@@ -62,6 +62,28 @@ export async function scanFolder(directory: string): Promise<ScanFile[]> {
   return invoke<ScanFile[]>("scan_folder", { directory });
 }
 
+/** PDF 本地路径 → 是否 PDF（决定要不要先渲染成图片） */
+export function isPdfPath(path: string): boolean {
+  return path.toLowerCase().endsWith(".pdf");
+}
+
+/**
+ * 把 PDF 的每页渲染成一张图片（后端缓存为 JPEG），返回图片的绝对路径。
+ * 尺寸与黑白由上传档位决定 —— 预览看到的就是模型看到的。
+ * 后端做了磁盘缓存，同一份 PDF 反复调用只渲染第一次。
+ */
+export async function renderPdf(
+  path: string,
+  longEdge: number,
+  grayscale: boolean
+): Promise<string[]> {
+  if (!IS_TAURI) {
+    // 浏览器预览模式没有真 PDF，给两张示意答题卡占位
+    return mockDelay(["/sample/card-a.svg", "/sample/card-b.svg"], 420);
+  }
+  return invoke<string[]>("render_pdf", { path, longEdge, grayscale });
+}
+
 export async function startGrading(req: GradeRequest): Promise<void> {
   if (!IS_TAURI) {
     return mockRunBatch(req);
@@ -209,7 +231,7 @@ async function mockRunBatch(req: GradeRequest): Promise<void> {
       total,
       file: name,
       stage: "uploading",
-      message: "调用 deepseek-flash 批改（预览模式）",
+      message: `调用 ${req.config.model || "模型"} 批改（预览模式）`,
     });
 
     await mockDelay(null, 900);

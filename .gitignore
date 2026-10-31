@@ -11,3 +11,9 @@ src-tauri/gen/schemas
 
 # 本地开发配置（含测试 API Key，绝不提交）
 src-tauri/dev-settings.json
+
+# 本地试卷/参考材料，不提交
+refer/
+
+# 调试符号等构建产物
+*.pdb

@@ -5,12 +5,59 @@
 
 use serde::{Deserialize, Serialize};
 
-/// 扫描到的单张答题卡
+/// 扫描到的一张答题卡（一份 PDF 也算"一张"，它的所有页属于同一位考生）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanFile {
+    /// 原始文件绝对路径（图片就是图片本身，PDF 就是 PDF 本身）
     pub path: String,
     pub file_name: String,
     pub size: u64,
+    /// 页数：图片恒为 1，PDF 是实际页数（解析失败时为 0）。
+    /// PDF 的图片由 `render_pdf` 按需渲染，扫描阶段不做（40 份 PDF 一起渲染会卡一分钟）。
+    pub page_count: u32,
+}
+
+/// 接口协议族。决定 endpoint、鉴权头、请求体与响应解析，四者必须成套切换。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ApiProtocol {
+    /// OpenAI 兼容：`POST {base}/chat/completions` + `Authorization: Bearer`
+    #[serde(rename = "openai")]
+    OpenAi,
+    /// Anthropic 兼容：`POST {base}/v1/messages` + `x-api-key` / `anthropic-version`
+    #[serde(rename = "anthropic")]
+    Anthropic,
+}
+
+impl Default for ApiProtocol {
+    fn default() -> Self {
+        Self::OpenAi
+    }
+}
+
+/// OpenAI 协议下「思考模式」用哪套字段传。
+///
+/// 各家不统一，传错会被官方接口当**未知参数**直接 400（OpenAI 尤其严格），
+/// 所以这里做成显式选项，`Auto` 只按 base_url 判断几个已知域名，其余一律不传。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ThinkingStyle {
+    /// 按 base_url 自动判断
+    #[serde(rename = "auto")]
+    Auto,
+    /// `thinking: {"type": "enabled"|"disabled"}`（DeepSeek 官方）
+    #[serde(rename = "deepseek")]
+    Deepseek,
+    /// `reasoning_effort: "high"`（OpenAI o 系列 / GPT-5；关掉时只能省略该字段）
+    #[serde(rename = "reasoning_effort")]
+    ReasoningEffort,
+    /// 一个思考参数都不发（普通视觉模型、不认识这些字段的网关）
+    #[serde(rename = "off")]
+    Off,
+}
+
+impl Default for ThinkingStyle {
+    fn default() -> Self {
+        Self::Auto
+    }
 }
 
 /// API 配置（由前端传入，可选持久化到 app_config_dir/settings.json）
@@ -30,6 +77,25 @@ pub struct ApiConfig {
     /// 11(1) 两空误给 4 分），一张卷子多算 5-7 分。赶时间可关，但要接受准确率下降。
     #[serde(default = "default_true")]
     pub thinking: bool,
+    /// 接口协议族。旧 settings.json 里没这个字段，默认按 OpenAI 兼容处理（不破坏老配置）
+    #[serde(default)]
+    pub protocol: ApiProtocol,
+    /// 仅 OpenAI 协议使用：思考参数写哪一套字段
+    #[serde(default)]
+    pub thinking_style: ThinkingStyle,
+    /// 上传前把图片/PDF 页缩到长边不超过这么多像素（0 表示不缩放）。
+    /// 视觉模型自己也有上限（Claude 4.6 长边 1568、OpenAI high 档 2048），
+    /// 传更大的图只是白占带宽。默认 2048。
+    #[serde(default = "default_long_edge")]
+    pub image_long_edge: u32,
+    /// 黑白（灰度）上传。答题卡是黑白扫描件，三通道完全冗余，转灰度能省 2/3 原始数据。
+    /// 默认开；如果卷面有红笔批注等彩色信息，关掉。
+    #[serde(default = "default_true")]
+    pub image_grayscale: bool,
+    /// 原图直传：不缩放、不转灰度、不重编码（只对图片生效；PDF 页本来就是渲染产物）。
+    /// 给"极端怀疑压缩影响识别"的场景留的逃生门。
+    #[serde(default)]
+    pub image_passthrough: bool,
 }
 
 fn default_model() -> String {
@@ -37,6 +103,9 @@ fn default_model() -> String {
 }
 fn default_timeout() -> u64 {
     180
+}
+fn default_long_edge() -> u32 {
+    crate::imaging::DEFAULT_LONG_EDGE
 }
 fn default_true() -> bool {
     true
@@ -51,6 +120,11 @@ impl Default for ApiConfig {
             timeout_secs: default_timeout(),
             json_mode: true,
             thinking: default_true(),
+            protocol: ApiProtocol::default(),
+            thinking_style: ThinkingStyle::default(),
+            image_long_edge: default_long_edge(),
+            image_grayscale: true,
+            image_passthrough: false,
         }
     }
 }

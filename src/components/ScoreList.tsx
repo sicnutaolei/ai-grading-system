@@ -21,32 +21,55 @@ export function ScoreList({
   filePath: string;
 }) {
   const overrides = useApp((s) => s.overrides[filePath]);
+  const [reviewOnly, setReviewOnly] = useState(false);
   const sections = useMemo(
     () => groupBySection(result.questions),
     [result.questions]
   );
+  const reviewCount = result.questions.filter((q) => q.review_needed).length;
+
+  useEffect(() => {
+    setReviewOnly(false);
+  }, [filePath]);
 
   if (result.questions.length === 0) {
     return (
-      <div className="rounded-lg border border-dashed p-4 text-center">
-        <p className="text-xs font-medium text-muted-foreground">
-          AI 没有返回得分明细
-        </p>
-        <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground/80">
-          模型可能违约返回了空 questions。点左下「重新批改这一张」，
-          或展开「原始返回」看看它到底吐了什么。
+      <div className="rounded-xl border border-dashed p-5 text-center">
+        <p className="text-xs font-medium">AI 没有返回得分明细</p>
+        <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+          可重新批改这一张，或展开底部「原始返回」排查模型输出。
         </p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
+      <div className="flex min-h-7 items-center justify-between gap-2">
+        <span className="text-[11px] text-muted-foreground">
+          共 {result.questions.length} 个得分点，点击分数即可修正
+        </span>
+        {reviewCount > 0 && (
+          <button
+            type="button"
+            aria-pressed={reviewOnly}
+            onClick={() => setReviewOnly((value) => !value)}
+            className={cn(
+              "flex h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-[10px] font-medium transition-colors",
+              reviewOnly
+                ? "border-amber-300 bg-amber-50 text-amber-700"
+                : "border-border bg-white text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Flag className="size-3" />{reviewOnly ? "查看全部" : `仅看待复核 ${reviewCount}`}
+          </button>
+        )}
+      </div>
+
       {sections.map(({ section, items }) => {
-        const got = items.reduce(
-          (sum, q) => sum + scoreOf(q, overrides),
-          0
-        );
+        const visibleItems = reviewOnly ? items.filter((q) => q.review_needed) : items;
+        if (visibleItems.length === 0) return null;
+        const got = items.reduce((sum, q) => sum + scoreOf(q, overrides), 0);
         const max = items.reduce((sum, q) => sum + q.max_score, 0);
         return (
           <Section
@@ -54,7 +77,7 @@ export function ScoreList({
             title={section}
             got={got}
             max={max}
-            items={items}
+            items={visibleItems}
             filePath={filePath}
             overrides={overrides}
           />
@@ -150,43 +173,36 @@ function ScoreRow({
       setDraft(fmtScore(value));
       return;
     }
-    setOverride(filePath, q.id, parsed);
+    const clamped = Math.min(Math.max(parsed, 0), q.max_score);
+    setDraft(fmtScore(clamped));
+    setOverride(filePath, q.id, clamped);
   };
 
   return (
     <div
       className={cn(
-        "group px-2.5 py-1.5 transition-colors",
-        manual ? "bg-amber-50/40" : "hover:bg-accent/30"
+        "group px-3 py-2.5 transition-colors",
+        manual ? "bg-amber-50/50" : q.review_needed ? "bg-amber-50/20" : "hover:bg-accent/30"
       )}
     >
       <div className="flex items-center gap-2">
-        <span className="flex min-w-0 items-center gap-1 text-[11px] font-medium">
+        <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium">
           <span className="truncate">{q.label}</span>
           {q.review_needed && (
-            <Flag
-              className="size-2.5 shrink-0 text-amber-500"
-              aria-label="AI 建议人工复核"
-            />
+            <Flag className="size-3 shrink-0 text-amber-500" aria-label="AI 建议人工复核" />
           )}
           {manual && (
-            <span className="shrink-0 rounded bg-amber-100 px-1 text-[9px] font-normal text-amber-700">
+            <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-medium text-amber-700">
               已改
             </span>
           )}
         </span>
 
-        <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground">
-          <span className={scoreTone(value, q.max_score)}>
-            {fmtScore(value)}
-          </span>
-          <span className="text-muted-foreground/50">/{fmtScore(q.max_score)}</span>
-        </span>
-
-        <div className="relative shrink-0">
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
           <Input
             value={draft}
             inputMode="decimal"
+            aria-label={`${q.label}得分，满分 ${fmtScore(q.max_score)} 分`}
             onChange={(e) => setDraft(e.target.value)}
             onBlur={commit}
             onKeyDown={(e) => {
@@ -199,56 +215,53 @@ function ScoreRow({
               }
             }}
             className={cn(
-              "h-6 w-12 px-1 text-center text-[11px] tabular-nums",
+              "h-7 w-14 bg-white px-1 text-center text-xs font-semibold tabular-nums shadow-none",
+              scoreTone(value, q.max_score),
               manual && "border-amber-300 bg-amber-50"
             )}
-            title="输入分数后回车/失焦生效"
+            title={`输入 0–${fmtScore(q.max_score)} 分，回车或失焦生效`}
           />
+          <span className="text-[11px] tabular-nums text-muted-foreground">
+            / {fmtScore(q.max_score)}
+          </span>
         </div>
 
         <button
           type="button"
           onClick={() => resetOverride(filePath, q.id)}
           className={cn(
-            "flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-opacity hover:bg-accent",
+            "flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-opacity hover:bg-accent",
             manual ? "opacity-100" : "opacity-0 group-hover:opacity-40"
           )}
-          title="恢复 AI 分数"
+          title={`恢复 AI 分数 ${fmtScore(q.ai_score)} 分`}
+          aria-label={`恢复 ${q.label} 的 AI 分数`}
           disabled={!manual}
         >
-          <RotateCcw className="size-3" />
+          <RotateCcw className="size-3.5" />
         </button>
       </div>
 
       {q.reason && (
-        <p className="mt-0.5 text-[10.5px] leading-relaxed text-muted-foreground">
+        <p className="mt-1.5 select-text text-[11px] leading-relaxed text-muted-foreground">
           {q.reason}
         </p>
       )}
 
       {(q.student_answer || q.standard_answer) && (
-        <p className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[10px] leading-snug text-muted-foreground/80">
+        <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-md bg-muted/50 px-2 py-1.5 text-[10px] leading-relaxed text-muted-foreground">
           {q.student_answer && (
-            <span>
-              学生：
-              <span className="font-mono text-foreground/70">
-                {q.student_answer}
-              </span>
-            </span>
+            <span>学生：<span className="select-text font-mono text-foreground/80">{q.student_answer}</span></span>
           )}
           {q.standard_answer && (
-            <span>
-              标准：
-              <span className="font-mono text-foreground/70">
-                {q.standard_answer}
-              </span>
-            </span>
+            <span>标准：<span className="select-text font-mono text-foreground/80">{q.standard_answer}</span></span>
           )}
-        </p>
+        </div>
       )}
 
       {q.review_note && (
-        <p className="mt-0.5 text-[10px] text-amber-600">复核提示：{q.review_note}</p>
+        <p className="mt-2 rounded-md bg-amber-50 px-2 py-1.5 text-[10px] leading-relaxed text-amber-700">
+          <span className="font-medium">复核提示：</span>{q.review_note}
+        </p>
       )}
     </div>
   );

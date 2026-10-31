@@ -4,10 +4,29 @@
  */
 
 export interface ScanFile {
+  /** 原始文件绝对路径（图片是图片本身，PDF 是 PDF 本身）；一份 PDF 算"一张卷" */
   path: string;
   file_name: string;
   size: number;
+  /** 页数：图片恒为 1，PDF 是实际页数（解析失败为 0） */
+  page_count: number;
 }
+
+/**
+ * 接口协议族。决定 endpoint、鉴权头、请求体与响应解析，四项必须成套切换：
+ * - openai：`{base}/chat/completions` + `Authorization: Bearer`
+ * - anthropic：`{base}/v1/messages` + `x-api-key` / `anthropic-version`
+ */
+export type ApiProtocol = "openai" | "anthropic";
+
+/**
+ * OpenAI 协议下思考参数用哪套字段传（各家不统一，传错会被官方接口 400）：
+ * - auto：按 base_url 自动判断（deepseek → deepseek，api.openai.com → reasoning_effort，其余不发）
+ * - deepseek：`thinking: {type}`
+ * - reasoning_effort：`reasoning_effort: "high"`
+ * - off：不发任何思考参数
+ */
+export type ThinkingStyle = "auto" | "deepseek" | "reasoning_effort" | "off";
 
 export interface ApiConfig {
   api_key: string;
@@ -17,6 +36,19 @@ export interface ApiConfig {
   json_mode: boolean;
   /** 思考模式。默认 true：关掉快 4 倍，但实测阅卷会多算 5-7 分 */
   thinking: boolean;
+  /** 接口协议族（OpenAI 兼容 / Anthropic 兼容） */
+  protocol: ApiProtocol;
+  /** 仅 OpenAI 协议使用：思考参数写哪一套字段 */
+  thinking_style: ThinkingStyle;
+  /**
+   * 上传前把图片/PDF 页缩到长边不超过这么多像素。
+   * 视觉模型自己也有上限（Claude 4.6 长边 1568、OpenAI high 档 2048），传更大的图没意义。
+   */
+  image_long_edge: number;
+  /** 黑白（灰度）上传：答题卡三通道冗余，转灰度省 2/3 数据。卷面有红笔批注时可关掉 */
+  image_grayscale: boolean;
+  /** 原图直传：不缩放、不转灰度、不重编码（仅对图片生效；PDF 页本来就是渲染产物） */
+  image_passthrough: boolean;
 }
 
 export interface QuestionScore {

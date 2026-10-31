@@ -3,13 +3,16 @@
 mod api;
 mod exporter;
 mod grading;
+mod imaging;
 mod models;
 mod parser;
+mod pdf;
 mod prompt;
 mod roster;
 mod scanner;
 mod settings;
 
+use imaging::ImageOptions;
 use models::{ApiConfig, ExportRequest, GradeRequest, GradingResult, ScanFile};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
@@ -29,10 +32,56 @@ async fn scan_folder(app: AppHandle, directory: String) -> Result<Vec<ScanFile>,
     app.asset_protocol_scope()
         .allow_directory(&dir, true)
         .map_err(|e| format!("授权图片目录失败（asset 协议将无法读取）：{e}"))?;
+    // PDF 渲染出来的 PNG 在缓存目录里，预览同样要走 asset 协议
+    allow_pdf_cache(&app)?;
 
     tokio::task::spawn_blocking(move || scanner::scan_folder(&dir))
         .await
         .map_err(|e| format!("扫描任务失败：{e}"))
+}
+
+/// 把 PDF 缓存目录加进 asset 协议白名单（并确保目录存在）
+fn allow_pdf_cache(app: &AppHandle) -> Result<PathBuf, String> {
+    let root = grading::cache_root(app);
+    std::fs::create_dir_all(&root)
+        .map_err(|e| format!("创建 PDF 缓存目录失败：{}：{e}", root.display()))?;
+    app.asset_protocol_scope()
+        .allow_directory(&root, true)
+        .map_err(|e| format!("授权 PDF 缓存目录失败（预览将 403）：{e}"))?;
+    Ok(root)
+}
+
+/// 把 PDF 渲染成图片（预览用）。返回页图片的绝对路径，前端可直接丢给 `<img>`。
+///
+/// 尺寸由「长边上限」决定（默认 2048），和真正上传时用的档位保持一致 ——
+/// 预览看到什么，模型看到的就是什么。结果有磁盘缓存，反复调用只渲染第一次。
+#[tauri::command]
+async fn render_pdf(
+    app: AppHandle,
+    path: String,
+    long_edge: Option<u32>,
+    grayscale: Option<bool>,
+) -> Result<Vec<String>, String> {
+    let file = PathBuf::from(path.trim());
+    if !file.is_file() {
+        return Err(format!("文件不存在：{}", file.display()));
+    }
+    if !pdf::is_pdf(&file) {
+        return Err("这不是 PDF 文件".into());
+    }
+
+    let root = allow_pdf_cache(&app)?;
+    let opts = ImageOptions {
+        long_edge: long_edge.unwrap_or(imaging::DEFAULT_LONG_EDGE),
+        grayscale: grayscale.unwrap_or(true),
+        // PDF 页是渲染产物，没有"原图"可直传
+        passthrough: false,
+    };
+
+    tokio::task::spawn_blocking(move || pdf::render_pages(&file, &opts, &root, &mut |_, _| {}))
+        .await
+        .map_err(|e| format!("渲染任务失败：{e}"))?
+        .map_err(|e| e.to_string())
 }
 
 /// 启动批量批改。立刻返回，进度与结果全部走事件。
@@ -59,6 +108,8 @@ async fn start_grading(app: AppHandle, mut req: GradeRequest) -> Result<(), Stri
     if req.prompt.trim().is_empty() {
         req.prompt = prompt::DEFAULT_RUBRIC.to_string();
     }
+    // 批改过程中会把 PDF 渲染到缓存目录，提前授权，另一边预览就不会 403
+    allow_pdf_cache(&app)?;
 
     tauri::async_runtime::spawn(async move {
         grading::run_batch(app, req).await;
@@ -90,6 +141,8 @@ async fn grade_single(
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| file_path.clone());
+    let root = allow_pdf_cache(&app)?;
+    let opts = ImageOptions::from_config(&config);
 
     grading::grade_one(
         &app,
@@ -97,6 +150,8 @@ async fn grade_single(
         &config,
         &system_prompt,
         &file_path,
+        &root,
+        opts,
         1,
         1,
         &file_name,
@@ -182,6 +237,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             scan_folder,
+            render_pdf,
             start_grading,
             grade_single,
             test_connection,
